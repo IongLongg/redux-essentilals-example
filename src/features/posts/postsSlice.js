@@ -1,40 +1,79 @@
-const { createSlice, nanoid } = require('@reduxjs/toolkit')
+import {
+  createSlice,
+  createAsyncThunk,
+  createSelector,
+  createEntityAdapter,
+} from '@reduxjs/toolkit'
+import { client } from '../../api/client'
 
-const initialState = [
-  { id: '1', title: 'First Post!', content: 'Hello!' },
-  { id: '2', title: 'Second Post', content: 'More text' },
-]
+const postsAdapter = createEntityAdapter({
+  sortComparer: (a, b) => b.date.localeCompare(a.date),
+})
+
+const initialState = postsAdapter.getInitialState({
+  status: 'idle',
+  error: null,
+})
+
+export const fetchPosts = createAsyncThunk('posts/fetchPosts', async () => {
+  const response = await client.get('/fakeApi/posts')
+  return response.posts
+})
+
+export const addNewPost = createAsyncThunk(
+  'posts/addNewPost',
+  async (initialPost) => {
+    const response = await client.post('/fakeApi/posts', { post: initialPost })
+    return response.post
+  }
+)
 
 const postsSlice = createSlice({
   name: 'posts',
   initialState,
   reducers: {
-    addPost: {
-      reducer: (state, action) => {
-        state.push(action.payload)
-      },
-      prepare: (payload) => {
-        return {
-          payload: {
-            id: nanoid(),
-            ...payload,
-          },
-        }
-      },
-    },
-    updatePost: (state, action) => {
+    postUpdated: (state, action) => {
       const { id, title, content } = action.payload
-      const post = state.find((post) => post.id === id)
+      const post = state.entities[id]
       if (post) {
         post.title = title
         post.content = content
       }
     },
+    reactionAdded: (state, action) => {
+      const { id, reaction } = action.payload
+      const post = state.entities[id]
+      if (post) {
+        post.reactions[reaction]++
+      }
+    },
+  },
+  extraReducers: {
+    [fetchPosts.pending]: (state, action) => {
+      state.status = 'loading'
+    },
+    [fetchPosts.fulfilled]: (state, action) => {
+      state.status = 'succeeded'
+      postsAdapter.upsertMany(state, action.payload)
+    },
+    [fetchPosts.rejected]: (state, action) => {
+      state.status = 'failed'
+      state.error = action.error.message
+    },
+    [addNewPost.fulfilled]: postsAdapter.addOne, // destructuring
   },
 })
 
-export const { addPost, updatePost } = postsSlice.actions
+export const { postUpdated, reactionAdded } = postsSlice.actions
 export default postsSlice.reducer
 
-// export const selectAllPosts = state => state.posts;
-// export const selectPostById = state => state.posts.find(post => post.id === postId);
+export const {
+  selectAll: selectAllPosts,
+  selectById: selectPostById,
+  selectIds: selectPostIds,
+} = postsAdapter.getSelectors((state) => state.posts)
+
+export const selectPostsByUser = createSelector(
+  [selectAllPosts, (state, userId) => userId], // take one or more input selector func as argument
+  (posts, userId) => posts.filter((post) => post.user === userId)
+)
